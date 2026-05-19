@@ -158,64 +158,72 @@ function getCoverImage(productType) {
   }
 }
 
-async function intentRouter(senderId, text) {
+function detectIntent(text) {
   const lower = text.toLowerCase();
 
   const hasShirt = /শার্ট|shirt/.test(lower);
   const hasPanjabi = /পাঞ্জাবি|panjabi/.test(lower);
-  const hasSize = /সাইজ|size|chart|sizing/.test(lower);
-  const hasPic = /ছবি|pic|photo|image|ফটো|দেখা|pictures?/.test(lower);
-  const hasPrice = /দাম|price|কত|মূল্য|cost|টাকা/.test(lower);
+  const hasSize = /সাইজ|size|chart|sizing|সাইস/.test(lower);
+  const hasPic = /ছবি|pic|photo|image|ফটো|দেখা|pictures?|pics/.test(lower);
+  const hasPrice = /দাম|price|কত|মূল্য|cost|টাকা|dam|dham|mullo|mull|dammo/.test(lower);
   const hasShirtKeyword = /শার্ট|shirt/.test(lower);
   const hasPanjabiKeyword = /পাঞ্জাবি|panjabi/.test(lower);
 
   if (hasSize && hasShirtKeyword) {
-    console.log('[INTENT] size chart for shirt');
-    await sendImage(senderId, 'shirt');
-    await sendSizeChart(senderId, 'shirt');
-    return true;
+    return { action: 'size_chart', product: 'shirt', intent: 'shirt_size', reply: 'এই চার্ট অনুযায়ী আপনি কোন সাইজটি নিতে চান?' };
   }
 
   if (hasSize && hasPanjabiKeyword) {
-    console.log('[INTENT] size chart for panjabi');
-    await sendImage(senderId, 'panjabi');
-    await sendSizeChart(senderId, 'panjabi');
-    return true;
+    return { action: 'size_chart', product: 'panjabi', intent: 'panjabi_size', reply: 'এই চার্ট অনুযায়ী আপনি কোন সাইজটি নিতে চান?' };
   }
 
-  if (hasSize && !hasShirtKeyword && !hasPanjabiKeyword) {
-    console.log('[INTENT] size chart (generic)');
-    await sendSizeChart(senderId, 'shirt');
-    return true;
+  if (hasSize) {
+    return { action: 'size_chart', product: 'shirt', intent: 'generic_size', reply: 'এই চার্ট অনুযায়ী আপনি কোন সাইজটি নিতে চান?' };
   }
 
   if (hasShirt && hasPic) {
-    console.log('[INTENT] shirt picture');
-    await sendImage(senderId, 'shirt');
-    await sendMessage(senderId, 'এটি আমাদের হাফ স্লিভ শার্ট (৬৯০ টাকা)। ক্যাশ অন ডেলিভারি পাওয়া যাবে।');
-    return true;
+    return { action: 'image', product: 'shirt', intent: 'shirt_picture', reply: 'এটি আমাদের হাফ স্লিভ শার্ট (৬৯০ টাকা)। ক্যাশ অন ডেলিভারি পাওয়া যাবে।' };
   }
 
   if (hasPanjabi && hasPic) {
-    console.log('[INTENT] panjabi picture');
-    await sendImage(senderId, 'panjabi');
-    await sendMessage(senderId, 'এটি আমাদের পাঞ্জাবি (৭৯০ টাকা)। ক্যাশ অন ডেলিভারি পাওয়া যাবে।');
-    return true;
+    return { action: 'image', product: 'panjabi', intent: 'panjabi_picture', reply: 'এটি আমাদের পাঞ্জাবি (৭৯০ টাকা)। ক্যাশ অন ডেলিভারি পাওয়া যাবে।' };
   }
 
   if (hasPrice && hasShirt) {
-    console.log('[INTENT] shirt price');
-    await sendMessage(senderId, 'হাফ স্লিভ শার্টের দাম ৬৯০ টাকা। ক্যাশ অন ডেলিভারি পাওয়া যাবে।');
-    return true;
+    return { action: 'price', product: 'shirt', intent: 'shirt_price', reply: 'হাফ স্লিভ শার্টের দাম ৬৯০ টাকা। ক্যাশ অন ডেলিভারি পাওয়া যাবে।' };
   }
 
   if (hasPrice && hasPanjabi) {
-    console.log('[INTENT] panjabi price');
-    await sendMessage(senderId, 'পাঞ্জাবির দাম ৭৯০ টাকা। ক্যাশ অন ডেলিভারি পাওয়া যাবে।');
-    return true;
+    return { action: 'price', product: 'panjabi', intent: 'panjabi_price', reply: 'পাঞ্জাবির দাম ৭৯০ টাকা। ক্যাশ অন ডেলিভারি পাওয়া যাবে।' };
   }
 
-  return false;
+  return { action: 'ai', intent: 'ai_fallback' };
+}
+
+async function executeIntent(senderId, text) {
+  const intent = detectIntent(text);
+
+  switch (intent.action) {
+    case 'size_chart':
+      console.log('[INTENT] size chart for', intent.product);
+      await sendImage(senderId, intent.product);
+      await sendSizeChart(senderId, intent.product);
+      return true;
+
+    case 'image':
+      console.log('[INTENT]', intent.product, 'picture');
+      await sendImage(senderId, intent.product);
+      await sendMessage(senderId, intent.reply);
+      return true;
+
+    case 'price':
+      console.log('[INTENT]', intent.product, 'price');
+      await sendMessage(senderId, intent.reply);
+      return true;
+
+    default:
+      return false;
+  }
 }
 
 async function openRouterChat(messages) {
@@ -343,9 +351,9 @@ app.post('/webhook', async (req, res) => {
 
         console.log(`[MSG IN] from=${senderId}, text="${messageText.substring(0, 100)}"`);
 
-        const handled = await intentRouter(senderId, messageText);
+        const handled = await executeIntent(senderId, messageText);
         if (handled) {
-          console.log(`[INTENT] Handled by intentRouter for ${senderId}`);
+          console.log(`[INTENT] Handled for ${senderId}`);
           continue;
         }
 
@@ -378,6 +386,35 @@ app.post('/webhook', async (req, res) => {
     console.error('Stack:', err.stack?.substring(0, 500));
     console.error('[WEBHOOK ERROR END] ========');
   }
+});
+
+app.get('/test', async (req, res) => {
+  const text = (req.query.msg || '').trim();
+  if (!text) {
+    return res.json({ error: 'Missing msg parameter. Usage: GET /test?msg=shirt+er+pic+dao' });
+  }
+
+  const result = { input: text };
+  const intent = detectIntent(text);
+
+  if (intent.action === 'ai') {
+    const messages = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user', content: text },
+    ];
+    result.intent = 'ai_fallback';
+    result.reply = await openRouterChat(messages);
+    result.note = 'AI reply (no Messenger API calls were made)';
+  } else {
+    result.intent = intent.intent;
+    result.action = intent.action;
+    result.product = intent.product || null;
+    result.reply = intent.reply;
+    result.sentImage = intent.action === 'image' || intent.action === 'size_chart';
+    result.note = 'Handled by intent router (no Messenger API calls were made)';
+  }
+
+  res.json(result);
 });
 
 app.get('/health', (_req, res) => {
