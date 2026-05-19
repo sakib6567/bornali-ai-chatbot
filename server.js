@@ -6,7 +6,8 @@ const app = express();
 app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+const RAW_VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+const VERIFY_TOKEN = RAW_VERIFY_TOKEN ? RAW_VERIFY_TOKEN.trim() : null;
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const MODEL = process.env.MODEL;
@@ -74,33 +75,46 @@ async function openRouterChat(messages) {
 
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
+  const token = req.query['hub.verify_token'] ? req.query['hub.verify_token'].trim() : null;
   const challenge = req.query['hub.challenge'];
 
-  console.log('Webhook verification request:', JSON.stringify(req.query));
+  console.log('=== WEBHOOK VERIFICATION REQUEST ===');
+  console.log('Query params:', JSON.stringify(req.query, null, 2));
+  console.log('hub.mode:', JSON.stringify(mode));
+  console.log('hub.verify_token length:', token ? token.length : 0);
+  console.log('hub.challenge present:', !!challenge);
+  console.log('VERIFY_TOKEN env var set:', !!RAW_VERIFY_TOKEN);
+  console.log('VERIFY_TOKEN env var length:', RAW_VERIFY_TOKEN ? RAW_VERIFY_TOKEN.length : 0);
 
-  if (!VERIFY_TOKEN) {
-    console.error('VERIFY_TOKEN is not set in environment variables');
-    return res.status(403).send('VERIFY_TOKEN not configured');
+  if (!RAW_VERIFY_TOKEN) {
+    console.error('ERROR: VERIFY_TOKEN not set in environment');
+    return res.status(403).type('text/plain').send('ERROR: VERIFY_TOKEN not set in environment variables');
   }
 
   if (mode !== 'subscribe') {
-    console.warn('Invalid hub.mode:', mode);
-    return res.sendStatus(403);
+    console.error('ERROR: Invalid hub.mode - expected "subscribe", got:', JSON.stringify(mode));
+    return res.status(403).type('text/plain').send('ERROR: Invalid hub.mode: ' + JSON.stringify(mode));
   }
 
   if (token !== VERIFY_TOKEN) {
-    console.warn('Token mismatch: expected length', VERIFY_TOKEN.length, 'got length', token?.length);
-    return res.sendStatus(403);
+    console.error('ERROR: Token mismatch');
+    console.error('  Expected token length:', VERIFY_TOKEN.length);
+    console.error('  Received token length:', token ? token.length : 0);
+    console.error('  Expected first char:', VERIFY_TOKEN[0]);
+    console.error('  Received first char:', token ? token[0] : 'null');
+    console.error('  Expected last char:', VERIFY_TOKEN[VERIFY_TOKEN.length - 1]);
+    console.error('  Received last char:', token ? token[token.length - 1] : 'null');
+    return res.status(403).type('text/plain').send('ERROR: Verify token mismatch');
   }
 
   if (!challenge) {
-    console.warn('Missing hub.challenge');
-    return res.sendStatus(403);
+    console.error('ERROR: Missing hub.challenge in request');
+    return res.status(403).type('text/plain').send('ERROR: Missing hub.challenge');
   }
 
-  console.log('Webhook verified successfully');
-  res.status(200).send(challenge);
+  console.log('=== WEBHOOK VERIFIED SUCCESSFULLY ===');
+  console.log('Returning challenge:', challenge.substring(0, 50));
+  res.status(200).type('text/plain').send(challenge);
 });
 
 app.post('/webhook', async (req, res) => {
@@ -149,7 +163,7 @@ app.get('/health', (_req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  if (!VERIFY_TOKEN) console.error('WARNING: VERIFY_TOKEN is not set');
+  if (!RAW_VERIFY_TOKEN) console.error('WARNING: VERIFY_TOKEN is NOT set in environment variables');
   if (!PAGE_ACCESS_TOKEN) console.error('WARNING: PAGE_ACCESS_TOKEN is not set');
   if (!OPENROUTER_API_KEY) console.error('WARNING: OPENROUTER_API_KEY is not set');
 });
