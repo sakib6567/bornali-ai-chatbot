@@ -15,9 +15,10 @@ const MODEL = process.env.MODEL;
 const conversations = new Map();
 
 const MODEL_FALLBACKS = [
-  'qwen/qwen3-32b:free',
-  'mistralai/mistral-7b-instruct:free',
-  'meta-llama/llama-3.1-8b-instruct:free',
+  'qwen/qwen-2.5-7b-instruct:free',
+  'mistralai/mistral-small-24b-instruct-2501:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'deepseek/deepseek-chat:free',
 ];
 
 const SYSTEM_PROMPT = `You are a friendly Facebook shop assistant for Bornali. Your job is to help customers place orders conversationally.
