@@ -30,24 +30,10 @@ Collect the following details from the customer naturally:
 
 Keep replies short, friendly, and natural. Support both Bangla and English. Do not be overly verbose. Ask for missing details one at a time. When all details are collected, confirm the order with the customer.`;
 
-let pageId = null;
-
-async function fetchPageId() {
-  try {
-    const res = await axios.get('https://graph.facebook.com/v21.0/me', {
-      params: { access_token: PAGE_ACCESS_TOKEN },
-    });
-    pageId = res.data.id;
-    console.log(`Page ID: ${pageId}`);
-  } catch (err) {
-    console.error('Failed to fetch page ID:', err.response?.data || err.message);
-  }
-}
-
 async function sendMessage(senderId, text) {
   try {
     await axios.post(
-      'https://graph.facebook.com/v21.0/me/messages',
+      'https://graph.facebook.com/v18.0/me/messages',
       {
         recipient: { id: senderId },
         message: { text },
@@ -114,7 +100,7 @@ app.post('/webhook', async (req, res) => {
         const messageText = event.message?.text;
 
         if (!messageText) continue;
-        if (event.message.is_echo || senderId === pageId) continue;
+        if (event.message.is_echo) continue;
 
         if (!conversations.has(senderId)) {
           conversations.set(senderId, [
@@ -146,5 +132,4 @@ app.get('/health', (_req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-  if (PAGE_ACCESS_TOKEN) fetchPageId();
 });
