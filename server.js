@@ -33,7 +33,7 @@ Keep replies short, friendly, and natural. Support both Bangla and English. Do n
 
 async function sendMessage(senderId, text) {
   try {
-    await axios.post(
+    const res = await axios.post(
       'https://graph.facebook.com/v18.0/me/messages',
       {
         recipient: { id: senderId },
@@ -41,18 +41,31 @@ async function sendMessage(senderId, text) {
       },
       { params: { access_token: PAGE_ACCESS_TOKEN } },
     );
-    console.log(`Replied to ${senderId}: ${text.substring(0, 60)}`);
+    console.log(`[FB SEND OK] ${senderId}: status=${res.status}, text="${text.substring(0, 60)}"`);
   } catch (err) {
-    console.error('sendMessage error:', err.response?.data || err.message);
+    console.error('[FB SEND ERROR] ============');
+    console.error('Status:', err.response?.status);
+    console.error('Body:', JSON.stringify(err.response?.data, null, 2));
+    console.error('Message:', err.message);
+    console.error('[FB SEND ERROR END] ========');
   }
 }
 
 async function openRouterChat(messages) {
+  if (!OPENROUTER_API_KEY) {
+    console.error('[OR ERROR] OPENROUTER_API_KEY is not set');
+    return 'AI temporarily unavailable (API key not configured)';
+  }
+
   const models = MODEL ? [MODEL, ...MODEL_FALLBACKS] : MODEL_FALLBACKS;
+  let lastError = '';
 
   for (const model of models) {
     try {
-      console.log(`Trying model: ${model}`);
+      const msgCount = messages.length;
+      const userMsg = messages.filter(m => m.role === 'user').length;
+      console.log(`[OR TRY] model=${model}, messages=${msgCount}, user_turns=${userMsg}`);
+
       const res = await axios.post(
         'https://openrouter.ai/api/v1/chat/completions',
         { model, messages, max_tokens: 300 },
@@ -62,15 +75,31 @@ async function openRouterChat(messages) {
             'Content-Type': 'application/json',
             'HTTP-Referer': 'https://github.com/sakib6567/bornali-ai-chatbot',
           },
+          timeout: 30000,
         },
       );
-      return res.data.choices[0].message.content;
+
+      const reply = res.data?.choices?.[0]?.message?.content;
+      if (!reply) {
+        console.error(`[OR WARN] ${model}: empty response, body=`, JSON.stringify(res.data));
+        continue;
+      }
+
+      console.log(`[OR OK] ${model}: reply="${reply.substring(0, 80)}"`);
+      return reply;
     } catch (err) {
-      console.error(`Model ${model} failed:`, err.response?.status, err.message);
+      console.error(`[OR FAIL] ${model} ============`);
+      console.error('Status:', err.response?.status);
+      console.error('Body:', JSON.stringify(err.response?.data, null, 2));
+      console.error('Code:', err.code);
+      console.error('Message:', err.message);
+      console.error('[OR FAIL END] ================');
+      lastError = err.response?.data?.error?.message || err.message;
     }
   }
 
-  return 'Sorry, I am having trouble responding right now. Please try again later.';
+  console.error(`[OR] ALL ${models.length} models failed. Last error: ${lastError}`);
+  return 'AI temporarily unavailable. Please try again later.';
 }
 
 app.get('/webhook', (req, res) => {
@@ -125,13 +154,24 @@ app.post('/webhook', async (req, res) => {
     for (const entry of entries) {
       const messaging = entry.messaging || [];
       for (const event of messaging) {
-        if (!event.message) continue;
+        if (!event.message) {
+          console.log('[WEBHOOK] Skipping non-message event');
+          continue;
+        }
 
         const senderId = event.sender?.id;
         const messageText = event.message?.text;
 
-        if (!messageText) continue;
-        if (event.message.is_echo) continue;
+        if (!messageText) {
+          console.log('[WEBHOOK] Skipping empty message');
+          continue;
+        }
+        if (event.message.is_echo) {
+          console.log('[WEBHOOK] Skipping echo (own message)');
+          continue;
+        }
+
+        console.log(`[MSG IN] from=${senderId}, text="${messageText.substring(0, 100)}"`);
 
         if (!conversations.has(senderId)) {
           conversations.set(senderId, [
@@ -146,14 +186,21 @@ app.post('/webhook', async (req, res) => {
           history.splice(1, history.length - 11);
         }
 
+        console.log(`[OR REQ] sender=${senderId}, history_length=${history.length}`);
+
         const reply = await openRouterChat(history);
+
+        console.log(`[MSG OUT] to=${senderId}, reply="${reply.substring(0, 100)}"`);
 
         history.push({ role: 'assistant', content: reply });
         await sendMessage(senderId, reply);
       }
     }
   } catch (err) {
-    console.error('Webhook processing error:', err.message);
+    console.error('[WEBHOOK ERROR] ============');
+    console.error('Message:', err.message);
+    console.error('Stack:', err.stack?.substring(0, 500));
+    console.error('[WEBHOOK ERROR END] ========');
   }
 });
 
