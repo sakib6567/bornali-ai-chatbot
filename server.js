@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
+const path = require('path');
+const fs = require('fs');
 
 const app = express();
 app.use(express.json());
@@ -11,6 +13,9 @@ const VERIFY_TOKEN = RAW_VERIFY_TOKEN ? RAW_VERIFY_TOKEN.trim() : null;
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
 const MODEL = process.env.MODEL;
+const BASE_URL = process.env.BASE_URL;
+
+const CWD = __dirname;
 
 const conversations = new Map();
 
@@ -20,16 +25,31 @@ const MODEL_FALLBACKS = [
   'mistralai/mistral-7b-instruct',
 ];
 
-const SYSTEM_PROMPT = `You are a friendly Facebook shop assistant for Bornali. Your job is to help customers place orders conversationally.
+const SYSTEM_PROMPT = `তুমি বোরনালি কোম্পানির একজন ফেসবুক শপ সহকারী।
 
-Collect the following details from the customer naturally:
-- Product name
-- Size
-- Color
-- Phone number
-- Delivery address
+ভাষার নিয়ম:
+- তুমি শুধুমাত্র খাঁটি বাংলায় উত্তর দেবে
+- কখনো ইংরেজি বা বাংলিশে উত্তর দিও না
+- ক্রেতা বাংলা, বাংলিশ বা ইংরেজিতে প্রশ্ন করতে পারে — তুমি সব বুঝবে কিন্তু শুধু বাংলায় উত্তর দেবে
 
-Keep replies short, friendly, and natural. Support both Bangla and English. Do not be overly verbose. Ask for missing details one at a time. When all details are collected, confirm the order with the customer.`;
+আমাদের প্রোডাক্ট:
+১. হাফ স্লিভ শার্ট — ৬৯০ টাকা (ক্যাশ অন ডেলিভারি)
+২. পাঞ্জাবি — ৭৯০ টাকা (ক্যাশ অন ডেলিভারি)
+৩. বেবি পাঞ্জাবি — শুধুমাত্র প্রিপেমেন্টে
+
+সাইজ সম্পর্কিত নিয়ম:
+- সাইজ নিয়ে কখনো নিজে কিছু বলবে না
+- সাইজ চার্ট ইমেজে আছে — ক্রেতাকে ইমেজ দেখে বেছে নিতে বলবে
+- S/M/L/XL বা কোন সাইজের নাম নিজে থেকে বলবে না
+
+অর্ডার কালেকশন:
+প্রাকৃতিকভাবে পর্যায়ক্রমে সংগ্রহ করবে: নাম → ফোন নম্বর → ঠিকানা → প্রোডাক্ট → সাইজ
+
+অজানা প্রশ্নে:
+"দুঃখিত, এই তথ্যটি আমার কাছে নেই। অনুগ্রহ করে একটু পরে আবার চেষ্টা করুন।"
+
+সবসময় ছোট এবং স্বাভাবিক বাংলায় উত্তর দাও (১-৩ লাইন)।
+মানুষের মতো সহজাত ও বন্ধুত্বপূর্ণ হবে। AI এর মতো হবে না।`;
 
 async function sendMessage(senderId, text) {
   try {
@@ -49,6 +69,153 @@ async function sendMessage(senderId, text) {
     console.error('Message:', err.message);
     console.error('[FB SEND ERROR END] ========');
   }
+}
+
+async function sendImage(senderId, productType) {
+  if (!BASE_URL) {
+    console.error('[IMG ERROR] BASE_URL not set');
+    return;
+  }
+  const imagePath = getCoverImage(productType);
+  if (!imagePath) {
+    console.error('[IMG ERROR] No cover image found for', productType);
+    return;
+  }
+  const folder = productType === 'shirt' ? 'Shirt' : 'Panjabi';
+  const imageUrl = `${BASE_URL}/media/${folder}/${encodeURIComponent(path.basename(imagePath))}`;
+  try {
+    const res = await axios.post(
+      'https://graph.facebook.com/v18.0/me/messages',
+      {
+        recipient: { id: senderId },
+        message: {
+          attachment: {
+            type: 'image',
+            payload: { url: imageUrl, is_reusable: true },
+          },
+        },
+      },
+      { params: { access_token: PAGE_ACCESS_TOKEN } },
+    );
+    console.log(`[FB IMG OK] ${senderId}: ${productType}, status=${res.status}`);
+  } catch (err) {
+    console.error('[FB IMG ERROR] ============');
+    console.error('Status:', err.response?.status);
+    console.error('Body:', JSON.stringify(err.response?.data, null, 2));
+    console.error('Message:', err.message);
+    console.error('[FB IMG ERROR END] ========');
+  }
+}
+
+async function sendSizeChart(senderId, productType) {
+  if (!BASE_URL) {
+    console.error('[CHART ERROR] BASE_URL not set');
+    return;
+  }
+  const folder = productType === 'shirt' ? 'Shirt' : 'Panjabi';
+  const chartUrl = `${BASE_URL}/media/${folder}/Size%20chart.jpg`;
+  try {
+    await axios.post(
+      'https://graph.facebook.com/v18.0/me/messages',
+      {
+        recipient: { id: senderId },
+        message: {
+          attachment: {
+            type: 'image',
+            payload: { url: chartUrl, is_reusable: true },
+          },
+        },
+      },
+      { params: { access_token: PAGE_ACCESS_TOKEN } },
+    );
+    console.log(`[CHART OK] ${senderId}: ${productType}`);
+    await sendMessage(senderId, 'এই চার্ট অনুযায়ী আপনি কোন সাইজটি নিতে চান?');
+  } catch (err) {
+    console.error('[CHART ERROR] ============');
+    console.error('Status:', err.response?.status);
+    console.error('Body:', JSON.stringify(err.response?.data, null, 2));
+    console.error('Message:', err.message);
+    console.error('[CHART ERROR END] ========');
+  }
+}
+
+function getCoverImage(productType) {
+  try {
+    if (productType === 'shirt') {
+      const dir = path.join(CWD, 'Shirt');
+      const files = fs.readdirSync(dir).filter(f => /\.(jpg|jpeg)$/i.test(f) && !/size\s*chart/i.test(f)).sort();
+      return files.length > 0 ? path.join(dir, files[0]) : null;
+    }
+    if (productType === 'panjabi') {
+      const dir = path.join(CWD, 'Panjabi');
+      const files = fs.readdirSync(dir).filter(f => /\.(jpg|jpeg)$/i.test(f) && !/size\s*chart/i.test(f)).sort();
+      return files.length > 0 ? path.join(dir, files[0]) : null;
+    }
+    return null;
+  } catch (err) {
+    console.error('[COVER ERROR]', err.message);
+    return null;
+  }
+}
+
+async function intentRouter(senderId, text) {
+  const lower = text.toLowerCase();
+
+  const hasShirt = /শার্ট|shirt/.test(lower);
+  const hasPanjabi = /পাঞ্জাবি|panjabi/.test(lower);
+  const hasSize = /সাইজ|size|chart|sizing/.test(lower);
+  const hasPic = /ছবি|pic|photo|image|ফটো|দেখা|pictures?/.test(lower);
+  const hasPrice = /দাম|price|কত|মূল্য|cost|টাকা/.test(lower);
+  const hasShirtKeyword = /শার্ট|shirt/.test(lower);
+  const hasPanjabiKeyword = /পাঞ্জাবি|panjabi/.test(lower);
+
+  if (hasSize && hasShirtKeyword) {
+    console.log('[INTENT] size chart for shirt');
+    await sendImage(senderId, 'shirt');
+    await sendSizeChart(senderId, 'shirt');
+    return true;
+  }
+
+  if (hasSize && hasPanjabiKeyword) {
+    console.log('[INTENT] size chart for panjabi');
+    await sendImage(senderId, 'panjabi');
+    await sendSizeChart(senderId, 'panjabi');
+    return true;
+  }
+
+  if (hasSize && !hasShirtKeyword && !hasPanjabiKeyword) {
+    console.log('[INTENT] size chart (generic)');
+    await sendSizeChart(senderId, 'shirt');
+    return true;
+  }
+
+  if (hasShirt && hasPic) {
+    console.log('[INTENT] shirt picture');
+    await sendImage(senderId, 'shirt');
+    await sendMessage(senderId, 'এটি আমাদের হাফ স্লিভ শার্ট (৬৯০ টাকা)। ক্যাশ অন ডেলিভারি পাওয়া যাবে।');
+    return true;
+  }
+
+  if (hasPanjabi && hasPic) {
+    console.log('[INTENT] panjabi picture');
+    await sendImage(senderId, 'panjabi');
+    await sendMessage(senderId, 'এটি আমাদের পাঞ্জাবি (৭৯০ টাকা)। ক্যাশ অন ডেলিভারি পাওয়া যাবে।');
+    return true;
+  }
+
+  if (hasPrice && hasShirt) {
+    console.log('[INTENT] shirt price');
+    await sendMessage(senderId, 'হাফ স্লিভ শার্টের দাম ৬৯০ টাকা। ক্যাশ অন ডেলিভারি পাওয়া যাবে।');
+    return true;
+  }
+
+  if (hasPrice && hasPanjabi) {
+    console.log('[INTENT] panjabi price');
+    await sendMessage(senderId, 'পাঞ্জাবির দাম ৭৯০ টাকা। ক্যাশ অন ডেলিভারি পাওয়া যাবে।');
+    return true;
+  }
+
+  return false;
 }
 
 async function openRouterChat(messages) {
@@ -101,6 +268,9 @@ async function openRouterChat(messages) {
   console.error(`[OR] ALL ${models.length} models failed. Last error: ${lastError}`);
   return 'AI temporarily unavailable. Please try again later.';
 }
+
+app.use('/media/Shirt', express.static(path.join(CWD, 'Shirt')));
+app.use('/media/Panjabi', express.static(path.join(CWD, 'Panjabi')));
 
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
@@ -172,6 +342,12 @@ app.post('/webhook', async (req, res) => {
         }
 
         console.log(`[MSG IN] from=${senderId}, text="${messageText.substring(0, 100)}"`);
+
+        const handled = await intentRouter(senderId, messageText);
+        if (handled) {
+          console.log(`[INTENT] Handled by intentRouter for ${senderId}`);
+          continue;
+        }
 
         if (!conversations.has(senderId)) {
           conversations.set(senderId, [
